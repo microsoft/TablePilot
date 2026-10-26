@@ -3,24 +3,13 @@
 
 import json
 from pathlib import Path
-import sys
 import traceback
-import matplotlib
-matplotlib.use('Agg')
-from io import StringIO
-import concurrent.futures
-import re
 import argparse
 
-def execute_code_with_timeout(code, local_namespace, timeout=120):
-    def run():
-        exec(code, local_namespace, local_namespace)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future = executor.submit(run)
-        try:
-            future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(f"Execution exceeded timeout of {timeout} seconds.")
+if __package__:
+    from .sandbox import run_analysis
+else:
+    from sandbox import run_analysis
 
 def main():
     parser = argparse.ArgumentParser()
@@ -50,57 +39,20 @@ def main():
             recommendations = json.load(f)
         output_dir = output_base_dir / table_name
         output_dir.mkdir(parents=True, exist_ok=True)
-        data_file_csv = csv_dir / f"{table_name}.csv"
-        data_file_csv = str(data_file_csv).replace('\\', '/')
+        data_file_csv = (csv_dir / f"{table_name}.csv").resolve()
+        data_file_csv.relative_to(csv_dir.resolve())
+        output_dir.resolve().relative_to(output_base_dir.resolve())
         for idx, recommendation in enumerate(recommendations):
             total_queries += 1
             code = recommendation.get('code', '')
             if not code:
                 print(f"No code found in recommendation {idx + 1}. Skipping.")
                 continue
-            code_modified = code.replace(
-                "pd.read_csv('table_name.csv')",
-                f"pd.read_csv(r'{data_file_csv}')"
-            ).replace(
-                'pd.read_csv("table_name.csv")',
-                f"pd.read_csv(r'{data_file_csv}')"
-            ).replace(
-                "file = 'table_name.csv'",
-                f"file = r'{data_file_csv}'"
-            ).replace(
-                'file = "table_name.csv"',
-                f'file = r"{data_file_csv}"'
-            ).replace("sep='\\t'", "sep='\t'")
-            code_modified = re.sub(r"pd\.read_csv\('table_\d+\.csv'\)", f"pd.read_csv(r'{data_file_csv}')", code_modified)
             query_number = idx + 1
             output_filename = f"query{query_number}"
             try:
-                local_namespace = {}
-                pattern = r"'[^']*output[^']*\.csv'"
-                if re.search(pattern, code_modified):
-                    csv_filepath = output_dir / f"query{idx + 1}.csv"
-                    replacement_path = csv_filepath.as_posix()
-                    code_modified = re.sub(pattern, f"r'{replacement_path}'", code_modified)
-                    execute_code_with_timeout(code_modified, local_namespace)
-                    print(f"CSV saved: {csv_filepath}")
-                elif 'plt.show()' in code_modified:
-                    image_filepath = output_dir / f"{output_filename}.png"
-                    code_modified = code_modified.replace(
-                        'plt.show()',
-                        f"plt.savefig(r'{str(image_filepath)}')"
-                    )
-                    execute_code_with_timeout(code_modified, local_namespace)
-                    print(f"Image saved: {image_filepath}")
-                else:
-                    old_stdout = sys.stdout
-                    sys.stdout = mystdout = StringIO()
-                    execute_code_with_timeout(code_modified, local_namespace)
-                    sys.stdout = old_stdout
-                    execution_output = mystdout.getvalue()
-                    output_filepath = output_dir / f"{output_filename}.txt"
-                    with open(output_filepath, 'w', encoding='utf-8') as f_out:
-                        f_out.write(execution_output)
-                    print(f"Output saved: {output_filepath}")
+                run_analysis(code, data_file_csv, output_dir, output_filename)
+                print(f"Sandbox results saved: {output_dir / output_filename}")
                 successful_queries += 1
             except TimeoutError as e:
                 print(f"Timeout occurred while processing table '{table_name}' query {query_number}: {e}")

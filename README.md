@@ -18,6 +18,17 @@ conda activate tablepilot
 pip install -r requirements.txt
 ```
 
+Generated-code execution in Steps 4-6 requires Python 3.11+ and Docker with Linux
+containers. Build the sandbox image before running either execution pipeline:
+
+```bash
+docker build -t tablepilot-sandbox:local framework/execution/sandbox
+```
+
+See [execution security and tests](framework/execution/sandbox/README.md) for
+limits, supported outputs, and validation. Execution fails closed if Docker or
+the image is unavailable; generated Python is never run on the host.
+
 ### Step 2: Tabular Data Process
 ```bash
 cd data_process
